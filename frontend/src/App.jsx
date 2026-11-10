@@ -27,11 +27,11 @@ export default function App() {
           <span className="avatar" aria-hidden="true">A</span>
           <div>
             <h1>Asha</h1>
-            <p>Virtual Key Account Manager for Snapdeal sellers</p>
+            <p>Virtual Key Account Manager for sellers</p>
           </div>
         </div>
         <div className="status-group">
-          <span className="tag" title="All numbers in this demo are simulated. Nothing is connected to live Snapdeal systems.">Simulated seller data</span>
+          <span className="tag" title="All numbers in this are simulated. Nothing is connected to live systems.">Simulated seller data</span>
           <span className={`server server-${ui.backend}`} role="status"><i aria-hidden="true" />{BACKEND[ui.backend]}</span>
         </div>
       </header>
