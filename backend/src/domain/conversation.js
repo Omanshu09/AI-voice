@@ -174,7 +174,7 @@ export function composeReply(plan, state, metrics = computeMetrics(), lastAssist
   if (plan.summary) return plan.summary.spokenText;
   if (plan.greetingOnly) return "Hello! Tell me what's worrying you about your business. For example, you can say your sales have dropped.";
   if (plan.about) return `I'm Asha, your virtual key account manager. I look at your sales data, ask a few questions one at a time, and suggest practical next steps.${plan.question ? " " + plan.question.text : " What would you like us to look into?"}`;
-  if (plan.redirect) return `I can only help with your Snapdeal business here, so let's stay with that. ${plan.question ? plan.question.short : "What would you like us to look into, such as your sales?"}`;
+  if (plan.redirect) return `I can only help with your business here, so let's stay with that. ${plan.question ? plan.question.short : "What would you like us to look into, such as your sales?"}`;
   if (plan.clarify) return `Sorry, I didn't quite catch that. ${plan.question.short}`;
   if (plan.followup) {
     const r = plan.recommendations[0];
