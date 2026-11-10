@@ -1,0 +1,12 @@
+import React from "react";
+const base = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true };
+export const Mic = p => <svg {...base} {...p}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>;
+export const Stop = p => <svg {...base} {...p}><rect x="6" y="6" width="12" height="12" rx="2" /></svg>;
+export const Volume = p => <svg {...base} {...p}><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4Z" /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /></svg>;
+export const VolumeOff = p => <svg {...base} {...p}><path d="M4 9.5v5h3.5L12 18V6L7.5 9.5H4Z" /><path d="m16 9.5 5 5M21 9.5l-5 5" /></svg>;
+export const Repeat = p => <svg {...base} {...p}><path d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5" /></svg>;
+export const PhoneOff = p => <svg {...base} {...p}><path d="M4 15.5c4.5-4 11.5-4 16 0l-1.8 2.4-3-1.4v-2.2a9 9 0 0 0-6.4 0v2.2l-3 1.4L4 15.5Z" /></svg>;
+export const Restart = p => <svg {...base} {...p}><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4.5h4.5" /></svg>;
+export const Download = p => <svg {...base} {...p}><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" /></svg>;
+export const Send = p => <svg {...base} {...p}><path d="M4 12 20 4l-4 16-4-6.5L4 12Z" /></svg>;
+export const Check = p => <svg {...base} {...p}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>;
