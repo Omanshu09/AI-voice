@@ -6,13 +6,7 @@ export const initialUi = () => ({
   notice: null, micStatus: "unknown", analysis: null, summary: null, backend: "checking", seller: null
 });
 
-/**
- * Owns the microphone, speech synthesis and the conversation lifecycle.
- * One instance, plain mutable fields, and ONE place that starts recognition, so two
- * microphone sessions can never run at once. React only receives state patches via `emit`.
- *
- *   idle -> listening -> thinking -> speaking -> idle (-> listening again in hands-free)
- */
+
 export class VoiceController {
   constructor(emit) {
     this.emit = emit;
@@ -39,7 +33,16 @@ export class VoiceController {
   // ---- startup ----
   init() {
     const slow = setTimeout(() => this.emit({ backend: "waking" }), 2500);
-    api.health().then(() => this.emit({ backend: "ready" })).catch(() => this.emit({ backend: "offline" })).finally(() => clearTimeout(slow));
+    const ping = (n = 0) => {
+      api.health()
+        .then(() => { clearTimeout(slow); this.emit({ backend: "ready" }); })
+        .catch(() => {
+          if (n >= 12 || this.destroyed) { clearTimeout(slow); this.emit({ backend: "offline" }); return; }
+          this.emit({ backend: "waking" });
+          this.later(() => ping(n + 1), 5000);
+        });
+    };
+    ping();
     api.seller().then(s => this.emit({ seller: s })).catch(() => {});
   }
 
