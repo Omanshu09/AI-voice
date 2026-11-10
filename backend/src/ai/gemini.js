@@ -6,38 +6,38 @@ export class GeminiError extends Error {
   }
 }
 
-const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
+const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
-/**
- * Calls Gemini's generateContent with a JSON-only response. The API key goes in a
- * header (never in the URL, so it cannot leak into logs). `fetchImpl` is injectable for tests.
- */
+// Calls Groq (OpenAI-compatible). The function name stays callGemini so chatService.js is untouched.
 export async function callGemini({ apiKey, model, brief, timeoutMs = 9000, fetchImpl = fetch }) {
   let res;
   try {
-    res = await fetchImpl(`${ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
+    res = await fetchImpl(ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-        contents: [{ role: "user", parts: [{ text: JSON.stringify(brief) }] }],
-        generationConfig: {
-          temperature: 0.5, maxOutputTokens: 900, responseMimeType: "application/json",
-          responseSchema: { type: "OBJECT", properties: { reply: { type: "STRING" } }, required: ["reply"] }
-        }
+        model,
+        messages: [
+          { role: "system", content: SYSTEM_INSTRUCTION },
+          { role: "user", content: JSON.stringify(brief) }
+        ],
+        temperature: 0.5,
+        max_tokens: 500,
+        response_format: { type: "json_object" }
       }),
       signal: AbortSignal.timeout(timeoutMs)
     });
   } catch (e) {
-    throw new GeminiError(e?.name === "TimeoutError" ? "Gemini timed out" : "Gemini network error", { kind: e?.name === "TimeoutError" ? "timeout" : "network" });
+    const timeout = e?.name === "TimeoutError";
+    throw new GeminiError(timeout ? "AI timed out" : "AI network error", { kind: timeout ? "timeout" : "network" });
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const retry = Number(res.headers?.get?.("retry-after")) * 1000 || 0;
     const kind = res.status === 429 ? "quota" : res.status === 404 || res.status === 400 ? "model" : res.status === 401 || res.status === 403 ? "auth" : "server";
-    throw new GeminiError(`Gemini HTTP ${res.status}`, { status: res.status, retryAfterMs: retry, kind });
+    throw new GeminiError(`AI HTTP ${res.status}`, { status: res.status, retryAfterMs: retry, kind });
   }
-  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text ?? "").join("") ?? "";
-  if (!text) throw new GeminiError("Gemini returned no text", { kind: "empty" });
+  const text = data?.choices?.[0]?.message?.content ?? "";
+  if (!text) throw new GeminiError("AI returned no text", { kind: "empty" });
   return text;
 }
