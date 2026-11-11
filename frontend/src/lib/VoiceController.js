@@ -6,13 +6,23 @@ export const initialUi = () => ({
   notice: null, micStatus: "unknown", analysis: null, summary: null, backend: "checking", seller: null
 });
 
-
+/**
+ * Owns the microphone, speech synthesis and the conversation lifecycle.
+ * One instance, plain mutable fields, and ONE place that starts recognition, so two
+ * microphone sessions can never run at once. React only receives state patches via `emit`.
+ *
+ *   idle -> listening -> thinking -> speaking -> idle (-> listening again in hands-free)
+ */
 export class VoiceController {
   constructor(emit) {
     this.emit = emit;
     this.Rec = getRecognitionCtor();
     this.synth = hasSynthesis() ? window.speechSynthesis : null;
-    this.supports = { recognition: Boolean(this.Rec), synthesis: Boolean(this.synth) };
+    // Fallback for browsers without usable built-in recognition: record audio, transcribe on the server.
+    this.canRecord = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && typeof MediaRecorder !== "undefined";
+    this.useRecorder = !this.Rec && this.canRecord;
+    this.recorder = null; this.transcribing = false;
+    this.supports = { recognition: Boolean(this.Rec) || this.canRecord, synthesis: Boolean(this.synth) };
     this.active = false; this.busy = false; this.speaking = false; this.destroyed = false;
     this.recog = null; this.gen = 0; this.timers = new Set(); this.watchdog = null;
     this.handsFree = false; this.muted = false; this.silence = 0;
@@ -68,7 +78,7 @@ export class VoiceController {
 
   resetSession() {
     this.cancelSpeech(); this.discardRecognition(); this.clearTimers();
-    this.session = null; this.history = []; this.lastAssistant = ""; this.retryText = null; this.silence = 0; this.lastSent = { key: "", at: 0 };
+    this.session = null; this.history = []; this.lastAssistant = ""; this.retryText = null; this.silence = 0; this.transcribing = false; this.lastSent = { key: "", at: 0 };
     this.emit(p => ({ ...initialUi(), handsFree: p.handsFree, muted: p.muted, backend: p.backend, seller: p.seller, micStatus: p.micStatus }));
   }
 
@@ -92,8 +102,8 @@ export class VoiceController {
 
   // ---- user controls ----
   pressMic() {
-    if (!this.active || this.busy) return;
-    if (this.recog && !this.recog.__discard) return this.stopListening();       // finish and send what was heard
+    if (!this.active || this.busy || this.transcribing) return;
+    if ((this.recog && !this.recog.__discard) || (this.recorder && !this.recorder.discard)) return this.stopListening();       // finish and send what was heard
     if (this.speaking) return this.interrupt();
     this.silence = 0; this.startListening();
   }
@@ -112,8 +122,8 @@ export class VoiceController {
 
   toggleHandsFree() {
     this.handsFree = !this.handsFree; this.emit({ handsFree: this.handsFree });
-    if (this.handsFree && this.active && !this.busy && !this.speaking && !this.recog) this.startListening();
-    if (!this.handsFree && this.recog) { this.discardRecognition(); this.setVoice("idle"); }
+    if (this.handsFree && this.active && !this.busy && !this.speaking && !this.recog && !this.recorder && !this.transcribing) this.startListening();
+    if (!this.handsFree && (this.recog || this.recorder)) { this.discardRecognition(); this.setVoice("idle"); }
   }
 
   repeat() {
@@ -195,7 +205,8 @@ export class VoiceController {
 
   // ---- listening ----
   startListening(tries = 0) {
-    if (!this.active || this.busy || this.speaking) return;
+    if (!this.active || this.busy || this.speaking || this.transcribing) return;
+    if (this.useRecorder) return this.startRecording();
     if (!this.Rec) { this.emit({ micStatus: "unsupported", notice: { kind: "info", text: "Voice input isn't supported in this browser. Type your answer or tap a suggestion instead." } }); return; }
     if (this.recog) { if (this.recog.__discard && tries < 10) this.later(() => this.startListening(tries + 1), 100); return; }
     const rec = new this.Rec();
@@ -218,13 +229,19 @@ export class VoiceController {
       } else if (e.error === "audio-capture") {
         this.emit({ notice: { kind: "error", text: "No microphone was found. Check that one is connected, or type your answer." } });
       } else if (e.error === "network") {
-        this.emit({ notice: { kind: "error", text: "Speech recognition needs an internet connection. Type your answer or try again." } });
+        if (this.canRecord) {
+          this.useRecorder = true; // built-in recognition is blocked or offline: switch to server transcription
+          this.emit({ notice: { kind: "info", text: "Switched to cloud voice transcription for this browser. Tap the microphone and speak." } });
+        } else {
+          this.emit({ notice: { kind: "error", text: "Speech recognition needs an internet connection. Type your answer or try again." } });
+        }
       }
     };
     rec.onend = () => {
       if (this.recog === rec) this.recog = null;
       this.emit({ interim: "" });
       if (rec.__discard || this.destroyed) return;
+      if (error === "network" && this.useRecorder) { this.setVoice("idle"); this.later(() => this.startListening(), 300); return; }
       if (error && error !== "no-speech" && error !== "aborted") { this.setVoice("idle"); return; }
       const text = (finalText || interim).trim();
       if (text) { this.silence = 0; this.submit(text); } else this.onSilence();
@@ -241,6 +258,68 @@ export class VoiceController {
     this.emit({ notice: { kind: "info", text: this.handsFree ? "Hands-free is paused because nothing was heard. Tap the microphone to continue." : "I didn't hear anything. Tap the microphone and try again, or pick a suggestion." } });
   }
 
-  stopListening() { try { this.recog?.stop(); } catch { /* ignore */ } }
-  discardRecognition() { if (this.recog) { this.recog.__discard = true; try { this.recog.abort(); } catch { /* ignore */ } } }
+  stopListening() {
+    if (this.recorder) { try { if (this.recorder.mr.state !== "inactive") this.recorder.mr.stop(); } catch { /* ignore */ } return; }
+    try { this.recog?.stop(); } catch { /* ignore */ }
+  }
+  discardRecognition() {
+    if (this.recog) { this.recog.__discard = true; try { this.recog.abort(); } catch { /* ignore */ } }
+    if (this.recorder) { this.recorder.discard = true; try { if (this.recorder.mr.state !== "inactive") this.recorder.mr.stop(); } catch { /* ignore */ } }
+  }
+
+  // ---- recording fallback (works in any browser with MediaRecorder) ----
+  async startRecording() {
+    if (this.recorder) return;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (e) {
+      const denied = e?.name === "NotAllowedError" || e?.name === "SecurityError";
+      if (denied) this.handsFree = false;
+      this.emit({ micStatus: denied ? "denied" : "unknown", handsFree: this.handsFree, notice: { kind: "error", text: denied ? "Microphone access is blocked. Allow it in your browser's site settings, or type your answer instead." : "No microphone was found. Check that one is connected, or type your answer." } });
+      this.setVoice("idle");
+      return;
+    }
+    if (!this.active || this.busy || this.speaking || this.recorder) { stream.getTracks().forEach(t => t.stop()); return; }
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find(m => MediaRecorder.isTypeSupported?.(m));
+    const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    const rec = { mr, stream, chunks: [], discard: false, heard: false, timer: null, ctx: null };
+    this.recorder = rec;
+    mr.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+    mr.onstop = () => this.finishRecording(rec);
+    try { // stop automatically after the seller goes quiet
+      const ctx = new (window.AudioContext || window.webkitAudioContext)(); rec.ctx = ctx; ctx.resume?.();
+      const an = ctx.createAnalyser(); an.fftSize = 1024; ctx.createMediaStreamSource(stream).connect(an);
+      const buf = new Uint8Array(an.fftSize), t0 = Date.now(); let lastVoice = t0;
+      rec.timer = setInterval(() => {
+        an.getByteTimeDomainData(buf);
+        let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
+        const now = Date.now();
+        if (Math.sqrt(sum / buf.length) > 0.02) { rec.heard = true; lastVoice = now; }
+        if ((rec.heard && now - lastVoice > 1500) || (!rec.heard && now - t0 > 8000) || now - t0 > 30000) this.stopListening();
+      }, 100);
+    } catch { rec.heard = true; } // no analyser: the seller taps the mic again to finish
+    mr.start();
+    this.setVoice("listening"); this.emit({ micStatus: "granted", interim: "" });
+  }
+
+  async finishRecording(rec) {
+    clearInterval(rec.timer);
+    try { rec.ctx?.close?.(); } catch { /* ignore */ }
+    rec.stream.getTracks().forEach(t => t.stop());
+    if (this.recorder === rec) this.recorder = null;
+    if (rec.discard || this.destroyed) return;
+    const blob = new Blob(rec.chunks, { type: rec.mr.mimeType || "audio/webm" });
+    if (!rec.heard || blob.size < 1500) { this.onSilence(); return; }
+    this.transcribing = true; this.setVoice("thinking"); this.emit({ interim: "Transcribing…" });
+    try {
+      const text = (await api.transcribe(blob)).trim();
+      this.transcribing = false; this.emit({ interim: "" });
+      if (!this.active || this.destroyed) return;
+      if (text) { this.silence = 0; this.submit(text); if (!this.busy) this.setVoice("idle"); } else this.onSilence();
+    } catch (e) {
+      this.transcribing = false;
+      this.emit({ interim: "", voice: "idle", notice: { kind: "error", text: e.userMessage || "Could not transcribe your voice. Type your answer instead." } });
+    }
+  }
 }
