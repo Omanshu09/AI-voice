@@ -28,10 +28,23 @@ async function request(path, { method = "GET", body, timeoutMs = 30000, retries 
   throw lastError;
 }
 
+async function transcribe(blob) {
+  let res;
+  try {
+    res = await fetch(BASE + "/api/transcribe", { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob, signal: AbortSignal.timeout(30000) });
+  } catch {
+    throw new ApiError("network", "Can't reach the server to transcribe your voice. Type your answer or try again.", "network");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return String(data.text ?? "");
+  throw new ApiError("transcribe " + res.status, res.status === 429 ? "The voice service is busy. Wait a moment, or type your answer." : "Couldn't transcribe your voice. Type your answer or try again.", "client");
+}
+
 export const api = {
-  health: () => request("/health", { retries: 0, timeoutMs: 60000 }),
+  health: () => request("/health", { retries: 3, timeoutMs: 60000 }),
   seller: () => request("/api/seller", { retries: 2 }),
   start: () => request("/api/session/start", { retries: 2, timeoutMs: 45000 }),
   chat: payload => request("/api/chat", { method: "POST", body: payload, timeoutMs: 30000 }),
-  summary: state => request("/api/summary", { method: "POST", body: { state } })
+  summary: state => request("/api/summary", { method: "POST", body: { state } }),
+  transcribe
 };
