@@ -5,6 +5,7 @@ import { isOriginAllowed } from "./http/cors.js";
 import { validateChatBody, validateSummaryBody } from "./http/validation.js";
 import { createChatService } from "./services/chatService.js";
 import { sellerProfile, sellerData } from "./data/sellerData.js";
+import { transcribeAudio } from "./ai/transcribe.js";
 
 export function createApp(config, deps = {}) {
   const app = express();
@@ -43,7 +44,19 @@ export function createApp(config, deps = {}) {
       res.status(500).json({ error: "Something went wrong on our side. Please try again." });
     }
   });
-
+  app.post("/api/transcribe", express.raw({ type: () => true, limit: "5mb" }), async (req, res) => {
+    if (!config.geminiKey && !deps.transcribe) return res.status(503).json({ error: "Voice transcription is not configured on the server." });
+    const audio = req.body;
+    if (!Buffer.isBuffer(audio) || audio.length < 500) return res.status(400).json({ error: "No audio received." });
+    try {
+      const run = deps.transcribe ?? transcribeAudio;
+      res.json({ text: await run({ apiKey: config.geminiKey, buffer: audio, mimeType: req.headers["content-type"] || "" }) });
+    } catch (e) {
+      console.warn("transcribe failed:", e?.kind || e?.message);
+      res.status(e?.kind === "quota" ? 429 : 502).json({ error: e?.kind === "quota" ? "Voice service is busy. Try again in a moment." : "Could not transcribe the audio." });
+    }
+  });
+  
   app.post("/api/summary", (req, res) => {
     const v = validateSummaryBody(req.body);
     if (!v.ok) return res.status(400).json({ error: v.error });
